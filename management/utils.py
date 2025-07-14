@@ -21,8 +21,7 @@ def load_env_vars_from_file(fn):
 
 def save_environment(env):
     with open("/etc/mailinabox.conf", "w", encoding="utf-8") as f:
-        for k, v in env.items():
-            f.write(f"{k}={v}\n")
+        f.writelines(f"{k}={v}\n" for k, v in env.items())
 
 # THE SETTINGS FILE AT STORAGE_ROOT/settings.yaml.
 
@@ -123,20 +122,22 @@ def shell(method, cmd_args, env=None, capture_stderr=False, return_bytes=False, 
     if method == "check_output" and input is not None:
         kwargs['input'] = input
 
-    if not trap:
+    try:
         ret = getattr(subprocess, method)(cmd_args, **kwargs)
-    else:
-        try:
-            ret = getattr(subprocess, method)(cmd_args, **kwargs)
-            code = 0
-        except subprocess.CalledProcessError as e:
-            ret = e.output
-            code = e.returncode
+        code = 0
+    except subprocess.CalledProcessError as e:
+        if not trap:
+            if False:
+                import sys, shlex
+                print(shlex.join(cmd_args), file=sys.stderr)
+                raise
+            raise
+        ret = e.output
+        code = e.returncode
     if not return_bytes and isinstance(ret, bytes): ret = ret.decode("utf8")
     if not trap:
         return ret
-    else:
-        return code, ret
+    return code, ret
 
 def create_syslog_handler():
     import logging.handlers
@@ -178,6 +179,35 @@ def wait_for_service(port, public, env, timeout):
 			if time.perf_counter() > start+timeout:
 				return False
 		time.sleep(min(timeout/4, 1))
+
+def get_ssh_port():
+	port_value = get_ssh_config_value("port")
+
+	if port_value:
+		return int(port_value)
+
+	return None
+
+def get_ssh_config_value(parameter_name):
+	# Returns ssh configuration value for the provided parameter
+	import subprocess
+	try:
+		output = shell('check_output', ['sshd', '-T'])
+	except FileNotFoundError:
+		# sshd is not installed. That's ok.
+		return None
+	except subprocess.CalledProcessError:
+		# error while calling shell command
+		return None
+
+	for line in output.split("\n"):
+		if " " not in line: continue # there's a blank line at the end
+		key, values = line.split(" ", 1)
+		if key == parameter_name:
+			return values # space-delimited if there are multiple values
+
+	# Did not find the parameter!
+	return None
 
 if __name__ == "__main__":
 	from web_update import get_web_domains
